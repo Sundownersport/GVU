@@ -714,39 +714,38 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            /* Intercept MENU (Escape) for hold detection */
-            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE
-                    && !ev.key.repeat) {
-                menu_down_at = SDL_GetTicks();
-                continue;
-            }
-            if (ev.type == SDL_KEYUP && ev.key.keysym.sym == SDLK_ESCAPE) {
-                Uint32 held = menu_down_at ? SDL_GetTicks() - menu_down_at : 0;
-                menu_down_at = 0;
-                if (held >= 1000) {
-                    overlay_active = 1;
-                } else {
-                    if (mode == MODE_BROWSER) {
-                        state.action = BROWSER_ACTION_QUIT;
-                    } else if (mode == MODE_HISTORY) {
-                        history.action = HISTORY_ACTION_BACK;
-                    } else if (mode == MODE_RESUME_PROMPT || mode == MODE_UPNEXT) {
-                        mode = MODE_BROWSER;
-                    } else { /* MODE_PLAYBACK */
-                        resume_save(player.path,
-                                    audio_get_clock(&player.audio),
-                                    player.probe.duration_sec);
-                        player_close(&player);
-                        if (direct_path) {
-                            running = 0;
-                        } else {
+            /* Intercept MENU (Escape) for hold detection — app mode only.
+               In direct/emu mode the spruceOS watchdog owns the home button. */
+            if (!direct_path) {
+                if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE
+                        && !ev.key.repeat) {
+                    menu_down_at = SDL_GetTicks();
+                    continue;
+                }
+                if (ev.type == SDL_KEYUP && ev.key.keysym.sym == SDLK_ESCAPE) {
+                    Uint32 held = menu_down_at ? SDL_GetTicks() - menu_down_at : 0;
+                    menu_down_at = 0;
+                    if (held >= 1000) {
+                        overlay_active = 1;
+                    } else {
+                        if (mode == MODE_BROWSER) {
+                            state.action = BROWSER_ACTION_QUIT;
+                        } else if (mode == MODE_HISTORY) {
+                            history.action = HISTORY_ACTION_BACK;
+                        } else if (mode == MODE_RESUME_PROMPT || mode == MODE_UPNEXT) {
+                            mode = MODE_BROWSER;
+                        } else { /* MODE_PLAYBACK */
+                            resume_save(player.path,
+                                        audio_get_clock(&player.audio),
+                                        player.probe.duration_sec);
+                            player_close(&player);
                             state.prog_folder_idx = -1;
                             state.prog_season_idx = -1;
                             mode = MODE_BROWSER;
                         }
                     }
+                    continue;
                 }
-                continue;
             }
 
 #ifdef GVU_HW
