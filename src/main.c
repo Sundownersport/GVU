@@ -729,7 +729,7 @@ int main(int argc, char *argv[]) {
                         overlay_active = 1;
                     } else {
                         if (mode == MODE_BROWSER) {
-                            state.action = BROWSER_ACTION_QUIT;
+                            running = 0;
                         } else if (mode == MODE_HISTORY) {
                             history.action = HISTORY_ACTION_BACK;
                         } else if (mode == MODE_RESUME_PROMPT || mode == MODE_UPNEXT) {
