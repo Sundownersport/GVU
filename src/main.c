@@ -326,12 +326,19 @@ int main(int argc, char *argv[]) {
        Must be called before SDL_Init so that win_w/win_h are already correct. */
     platform_init_from_env();
 
+    /* Direct playback mode: argv[1] is a file path → skip browser, play, exit */
+    const char *direct_path = NULL;
+#ifdef GVU_HW
+    if (argc >= 2 && argv[1][0] == '/') direct_path = argv[1];
+#endif
+
     /* win_w/win_h: logical canvas (always landscape orientation) */
     int win_w = g_display_w;
     int win_h = g_display_h;
 #ifndef GVU_HW
     /* Desktop: allow optional command-line override for testing */
     if (argc == 3) { win_w = atoi(argv[1]); win_h = atoi(argv[2]); }
+    else if (argc == 2) direct_path = argv[1];
     else (void)argv;
     (void)argc;
 #else
@@ -460,22 +467,27 @@ int main(int argc, char *argv[]) {
     SDL_Texture *default_folder = theme_render_folder_cover(renderer,
                                                              "resources/default_folder.svg");
 
-    printf("Scanning media library...\n");
     MediaLibrary lib;
-    library_scan(&lib);
-    printf("Found %d folder(s).\n", lib.folder_count);
-
     BrowserState state;
     CoverCache   cache;
-    browser_init(&state, &cache, &lib);
-    /* Restore saved layout preferences */
-    state.layout        = (BrowserLayout)config_get_layout();
-    state.season_layout = (BrowserLayout)config_get_season_layout();
-
     HistoryState history;
     memset(&history, 0, sizeof(history));
 
-    AppMode  mode   = MODE_BROWSER;
+    if (!direct_path) {
+        printf("Scanning media library...\n");
+        library_scan(&lib);
+        printf("Found %d folder(s).\n", lib.folder_count);
+        browser_init(&state, &cache, &lib);
+        state.layout        = (BrowserLayout)config_get_layout();
+        state.season_layout = (BrowserLayout)config_get_season_layout();
+    } else {
+        printf("Direct playback: %s\n", direct_path);
+        memset(&lib, 0, sizeof(lib));
+        memset(&state, 0, sizeof(state));
+        memset(&cache, 0, sizeof(cache));
+    }
+
+    AppMode  mode   = direct_path ? MODE_PLAYBACK : MODE_BROWSER;
     Player   player;
     memset(&player, 0, sizeof(player));
     Uint32   last_resume_save = 0;
@@ -543,6 +555,24 @@ int main(int argc, char *argv[]) {
 
     int      running      = 1;
     long     frame_ns     = 1000000000L / FPS_CAP; /* nanoseconds per frame */
+
+    /* Direct playback mode: open the file immediately */
+    if (direct_path) {
+        char errbuf[256] = {0};
+        if (player_open(&player, direct_path, renderer, errbuf, sizeof(errbuf)) != 0) {
+            fprintf(stderr, "Failed to open %s: %s\n", direct_path, errbuf);
+            running = 0;
+        } else {
+            player_play(&player);
+            /* Resume from last position if available */
+            double saved_pos = resume_load(direct_path);
+            if (saved_pos > 1.0) {
+                player_seek_to(&player, saved_pos);
+                player_show_osd(&player);
+            }
+            last_resume_save = SDL_GetTicks();
+        }
+    }
 
     while (running) {
         /* Honor SIGTERM / SIGINT */
@@ -707,9 +737,13 @@ int main(int argc, char *argv[]) {
                                     audio_get_clock(&player.audio),
                                     player.probe.duration_sec);
                         player_close(&player);
-                        state.prog_folder_idx = -1;
-                        state.prog_season_idx = -1;
-                        mode = MODE_BROWSER;
+                        if (direct_path) {
+                            running = 0;
+                        } else {
+                            state.prog_folder_idx = -1;
+                            state.prog_season_idx = -1;
+                            mode = MODE_BROWSER;
+                        }
                     }
                 }
                 continue;
@@ -1240,10 +1274,14 @@ int main(int argc, char *argv[]) {
                                         audio_get_clock(&player.audio),
                                         player.probe.duration_sec);
                             player_close(&player);
-                            state.prog_folder_idx = -1;
-                            state.prog_season_idx = -1;
                             start_held = 0; start_used_as_modifier = 0;
-                            mode = MODE_BROWSER;
+                            if (direct_path) {
+                                running = 0;
+                            } else {
+                                state.prog_folder_idx = -1;
+                                state.prog_season_idx = -1;
+                                mode = MODE_BROWSER;
+                            }
                             break;
                         default: break;
                     }
@@ -1258,6 +1296,8 @@ int main(int argc, char *argv[]) {
                 resume_record_completed(player.path);
                 resume_clear(player.path);
                 player_close(&player);
+
+                if (direct_path) { running = 0; break; }
 
                 /* Check if there is a next file in the same folder/season */
                 const MediaFolder *folder = &lib.folders[play_folder_idx];
