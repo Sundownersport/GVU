@@ -63,6 +63,9 @@ if [ -f "$REPO_ROOT/icon.png" ]; then
     cp "$REPO_ROOT/icon.png" "$STAGE/GVU/"
 fi
 
+# API keys README
+cp "$REPO_ROOT/API_KEYS.txt" "$STAGE/GVU/"
+
 # Create zip
 cd "$STAGE"
 rm -f "$OUT_ZIP"

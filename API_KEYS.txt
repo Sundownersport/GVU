@@ -1,0 +1,41 @@
+GVU — Optional API Keys
+========================
+
+GVU works without any API keys, but two free keys unlock extra features:
+
+  TMDB key  — cover art scraping (show posters fetched automatically)
+  SubDL key — subtitle search and download from SubDL
+
+Without these keys, cover art uses TVMaze only (no key needed) and
+subtitle search falls back to Podnapisi only (no key needed).
+
+
+How to get your keys
+--------------------
+
+TMDB (The Movie Database):
+  1. Create a free account at https://www.themoviedb.org/signup
+  2. Go to https://www.themoviedb.org/settings/api
+  3. Request an API key (choose "Developer" / personal use)
+  4. Copy the "API Key (v3 auth)" value
+
+SubDL:
+  1. Create a free account at https://subdl.com
+  2. Go to https://subdl.com/panel/api
+  3. Copy your API key
+
+
+How to add them
+---------------
+
+Edit gvu.conf (created automatically on first launch) and add:
+
+  tmdb_key = your_tmdb_key_here
+  subdl_key = your_subdl_key_here
+
+The file lives in the GVU app/emu folder on your SD card:
+
+  App mode:  /mnt/SDCARD/App/GVU/gvu.conf
+  Emu mode:  /mnt/SDCARD/Emu/MEDIA/gvu.conf
+
+Keys persist across updates as long as gvu.conf is not deleted.
