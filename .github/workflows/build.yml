@@ -31,7 +31,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Debian 11 can no longer be rebuilt (bullseye-security's pool is gone),
+      # so reuse the image this workflow pushed while it still could.
+      - name: Pull the builder image
+        id: pull
+        run: docker pull "${{ env.IMAGE }}:latest" && echo "have=true" >> "$GITHUB_OUTPUT" || true
+
       - name: Download vendored deps
+        if: steps.pull.outputs.have != 'true'
         run: |
           mkdir -p cross-compile/deps
           wget -q -O cross-compile/deps/openssl-1.1.1w.tar.gz \
@@ -40,6 +47,7 @@ jobs:
             "https://curl.se/download/curl-8.7.1.tar.gz"
 
       - name: Build and push Docker image
+        if: steps.pull.outputs.have != 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -86,7 +94,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Debian 11 can no longer be rebuilt (bullseye-security's pool is gone),
+      # so reuse the image this workflow pushed while it still could.
+      - name: Pull the builder image
+        id: pull
+        run: docker pull "${{ env.IMAGE }}:latest" && echo "have=true" >> "$GITHUB_OUTPUT" || true
+
       - name: Download vendored deps
+        if: steps.pull.outputs.have != 'true'
         run: |
           mkdir -p cross-compile/deps
           wget -q -O cross-compile/deps/openssl-1.1.1w.tar.gz \
@@ -95,6 +110,7 @@ jobs:
             "https://curl.se/download/curl-8.7.1.tar.gz"
 
       - name: Build and push Docker image
+        if: steps.pull.outputs.have != 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
