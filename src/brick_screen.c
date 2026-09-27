@@ -81,6 +81,8 @@ static int      s_use_drm     = 0;  /* 1 when DRM/KMS path is active */
  * the back buffer. Landscape panels write the back buffer directly. */
 static int      s_rotated     = 0;
 static Uint32  *s_land        = NULL;
+static int      s_buf_w       = 0;  /* the buffer GVU actually got */
+static int      s_buf_h       = 0;
 
 static int      s_input_fd    = -1;
 
@@ -396,24 +398,36 @@ fail:
  * brick_screen_init
  * ---------------------------------------------------------------------- */
 
-int brick_screen_init(void) {
-    s_rotated = (g_display_rotation == 90 || g_display_rotation == 270);
-    if (s_rotated) {
-        s_land = (Uint32 *)malloc((size_t)BRICK_W * (size_t)BRICK_H * sizeof(Uint32));
-        if (!s_land) {
-            fprintf(stderr, "brick_screen_init: no memory for the landscape canvas\n");
-            return -1;
-        }
-        fprintf(stderr, "brick_screen: rotation %d, compose %dx%d, transpose to %dx%d\n",
-                g_display_rotation, BRICK_W, BRICK_H, g_panel_w, g_panel_h);
+/* Transpose only when asked to AND the buffer really is the canvas turned
+ * on its side. A device whose display stack already presents landscape keeps
+ * the straight copy whatever the platform says. */
+static int setup_rotation(void) {
+    int asked = (g_display_rotation == 90 || g_display_rotation == 270);
+    s_rotated = asked && s_buf_w == BRICK_H && s_buf_h == BRICK_W;
+    if (asked && !s_rotated)
+        fprintf(stderr, "brick_screen: rotation %d requested but the buffer is %dx%d, copying straight\n",
+                g_display_rotation, s_buf_w, s_buf_h);
+    if (!s_rotated) return 0;
+    s_land = (Uint32 *)malloc((size_t)BRICK_W * (size_t)BRICK_H * sizeof(Uint32));
+    if (!s_land) {
+        fprintf(stderr, "brick_screen_init: no memory for the landscape canvas\n");
+        return -1;
     }
+    fprintf(stderr, "brick_screen: rotation %d, compose %dx%d, transpose to %dx%d\n",
+            g_display_rotation, BRICK_W, BRICK_H, s_buf_w, s_buf_h);
+    return 0;
+}
 
+int brick_screen_init(void) {
     /* Try DRM/KMS first.  On devices with single-page fb0 (e.g. Miyoo Flip)
      * DRM gives tear-free vsync-locked output.  Falls back to fb0 if unavailable. */
     if (flip_drm_init() == 0) {
         s_use_drm = 1;
         /* DRM stride (pixels/row) must match BRICK_W for the write loops */
         s_fb_stride = (int)(s_drm_pitch / 4);
+        s_buf_w     = s_drm_mode.hdisplay;
+        s_buf_h     = s_drm_mode.vdisplay;
+        if (setup_rotation() != 0) return -1;
         s_input_fd  = open(g_input_dev, O_RDONLY | O_NONBLOCK);
         if (s_input_fd < 0)
             fprintf(stderr, "brick_screen_init: open %s: %s (non-fatal)\n",
@@ -465,8 +479,11 @@ int brick_screen_init(void) {
         return -1;
     }
 
+    s_buf_w        = (int)vinfo.xres;
+    s_buf_h        = (int)vinfo.yres;
+    if (setup_rotation() != 0) return -1;
     s_fb_yoffset   = (int)vinfo.yoffset;
-    s_fb_back_yoff = (s_fb_yoffset == 0) ? g_panel_h : 0;
+    s_fb_back_yoff = (s_fb_yoffset == 0) ? s_buf_h : 0;
 
     /* If fb0 still doesn't have room for two pages, disable double-buffering. */
     {
@@ -509,14 +526,14 @@ static int     compose_stride(void) { return s_rotated ? BRICK_W : s_fb_stride; 
 static void rotate_out(void) {
     Uint32 *dst = back_buffer();
     const int W = BRICK_W, H = BRICK_H;
-    for (int r = 0; r < g_panel_h; r++) {
+    for (int r = 0; r < s_buf_h; r++) {
         Uint32 *out = dst + (size_t)r * (size_t)s_fb_stride;
         if (g_display_rotation == 270) {
             const Uint32 *col = s_land + (W - 1 - r);
-            for (int c = 0; c < g_panel_w; c++)
+            for (int c = 0; c < s_buf_w; c++)
                 out[c] = col[(size_t)c * (size_t)W];
         } else {
-            for (int c = 0; c < g_panel_w; c++)
+            for (int c = 0; c < s_buf_w; c++)
                 out[c] = s_land[(size_t)(H - 1 - c) * (size_t)W + r];
         }
     }
@@ -620,7 +637,7 @@ static void brick_pageflip(void) {
         vinfo.activate = 0;  /* FB_ACTIVATE_NOW */
         if (ioctl(s_fb_fd, FBIOPAN_DISPLAY, &vinfo) == 0) {
             s_fb_yoffset   = s_fb_back_yoff;
-            s_fb_back_yoff = (s_fb_yoffset == 0) ? g_panel_h : 0;
+            s_fb_back_yoff = (s_fb_yoffset == 0) ? s_buf_h : 0;
         }
     }
 }
