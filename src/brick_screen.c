@@ -32,6 +32,7 @@
  *   MENU   BTN_MODE   (0x13C)      →  SDLK_ESCAPE
  *   Vol+   KEY_VOLUMEUP   (0x73)   →  SDLK_EQUALS
  *   Vol-   KEY_VOLUMEDOWN (0x72)   →  SDLK_MINUS
+ *   GVU_KEY_A .. GVU_KEY_MENU in the environment replace the evdev codes.
  * ---------------------------------------------------------------------- */
 
 #include "brick_screen.h"
@@ -418,7 +419,10 @@ static int setup_rotation(void) {
     return 0;
 }
 
+static void keymap_from_env(void);
+
 int brick_screen_init(void) {
+    keymap_from_env();
     /* Try DRM/KMS first.  On devices with single-page fb0 (e.g. Miyoo Flip)
      * DRM gives tear-free vsync-locked output.  Falls back to fb0 if unavailable. */
     if (flip_drm_init() == 0) {
@@ -879,26 +883,37 @@ void brick_screen_wake(void) {
 
 #define TRIGGER_THRESHOLD 64
 
-typedef struct { int linux_code; SDL_Keycode sdl_sym; } KeyMap;
+typedef struct { int linux_code; SDL_Keycode sdl_sym; const char *env; } KeyMap;
 
-static const KeyMap s_keymap[] = {
-    { BTN_EAST,         SDLK_SPACE    },  /* A (right) */
-    { BTN_SOUTH,        SDLK_LCTRL   },  /* B (bottom) */
-    { BTN_NORTH,        SDLK_LALT    },  /* X (top) — in evdev this is Xbox Y, but device labels it X */
-    { BTN_WEST,         SDLK_LSHIFT  },  /* Y (left) — in evdev this is Xbox X, but device labels it Y */
-    { BTN_TL,           SDLK_PAGEUP  },  /* L1       */
-    { BTN_TR,           SDLK_PAGEDOWN},  /* R1       */
-    { BTN_SELECT,       SDLK_RCTRL   },  /* SELECT   */
-    { BTN_START,        SDLK_RETURN  },  /* START    */
-    { BTN_MODE,         SDLK_ESCAPE  },  /* MENU     */
-    { KEY_VOLUMEUP,     SDLK_EQUALS  },  /* Vol+     */
-    { KEY_VOLUMEDOWN,   SDLK_MINUS   },  /* Vol-     */
-    { 0, 0 },
+/* Brick codes by default; GVU_KEY_<name> overrides a code (spruceOS exports
+ * them from its B_* variables, so pads with another numbering just work). */
+static KeyMap s_keymap[] = {
+    { BTN_EAST,         SDLK_SPACE,    "GVU_KEY_A"      },
+    { BTN_SOUTH,        SDLK_LCTRL,    "GVU_KEY_B"      },
+    { BTN_NORTH,        SDLK_LALT,     "GVU_KEY_X"      },
+    { BTN_WEST,         SDLK_LSHIFT,   "GVU_KEY_Y"      },
+    { BTN_TL,           SDLK_PAGEUP,   "GVU_KEY_L1"     },
+    { BTN_TR,           SDLK_PAGEDOWN, "GVU_KEY_R1"     },
+    { 0,                SDLK_COMMA,    "GVU_KEY_L2"     },
+    { 0,                SDLK_PERIOD,   "GVU_KEY_R2"     },
+    { BTN_SELECT,       SDLK_RCTRL,    "GVU_KEY_SELECT" },
+    { BTN_START,        SDLK_RETURN,   "GVU_KEY_START"  },
+    { BTN_MODE,         SDLK_ESCAPE,   "GVU_KEY_MENU"   },
+    { KEY_VOLUMEUP,     SDLK_EQUALS,   NULL             },
+    { KEY_VOLUMEDOWN,   SDLK_MINUS,    NULL             },
+    { 0, 0, NULL },
 };
 
+static void keymap_from_env(void) {
+    for (int i = 0; s_keymap[i].sdl_sym; i++) {
+        const char *v = s_keymap[i].env ? getenv(s_keymap[i].env) : NULL;
+        if (v && atoi(v) > 0) s_keymap[i].linux_code = atoi(v);
+    }
+}
+
 static SDL_Keycode lookup_keycode(int linux_code) {
-    for (int i = 0; s_keymap[i].linux_code; i++)
-        if (s_keymap[i].linux_code == linux_code)
+    for (int i = 0; s_keymap[i].sdl_sym; i++)
+        if (s_keymap[i].linux_code && s_keymap[i].linux_code == linux_code)
             return s_keymap[i].sdl_sym;
     return SDLK_UNKNOWN;
 }
