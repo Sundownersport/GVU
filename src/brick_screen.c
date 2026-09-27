@@ -76,6 +76,12 @@ static int      s_fb_wake_frames = 0;
 
 static int      s_use_drm     = 0;  /* 1 when DRM/KMS path is active */
 
+/* Portrait panel (rotation 90/270): the blit paths compose into s_land, a
+ * landscape BRICK_W x BRICK_H canvas, and brick_pageflip transposes it into
+ * the back buffer. Landscape panels write the back buffer directly. */
+static int      s_rotated     = 0;
+static Uint32  *s_land        = NULL;
+
 static int      s_input_fd    = -1;
 
 static void brick_pageflip(void);   /* forward declaration */
@@ -391,6 +397,17 @@ fail:
  * ---------------------------------------------------------------------- */
 
 int brick_screen_init(void) {
+    s_rotated = (g_display_rotation == 90 || g_display_rotation == 270);
+    if (s_rotated) {
+        s_land = (Uint32 *)malloc((size_t)BRICK_W * (size_t)BRICK_H * sizeof(Uint32));
+        if (!s_land) {
+            fprintf(stderr, "brick_screen_init: no memory for the landscape canvas\n");
+            return -1;
+        }
+        fprintf(stderr, "brick_screen: rotation %d, compose %dx%d, transpose to %dx%d\n",
+                g_display_rotation, BRICK_W, BRICK_H, g_panel_w, g_panel_h);
+    }
+
     /* Try DRM/KMS first.  On devices with single-page fb0 (e.g. Miyoo Flip)
      * DRM gives tear-free vsync-locked output.  Falls back to fb0 if unavailable. */
     if (flip_drm_init() == 0) {
@@ -449,7 +466,7 @@ int brick_screen_init(void) {
     }
 
     s_fb_yoffset   = (int)vinfo.yoffset;
-    s_fb_back_yoff = (s_fb_yoffset == 0) ? BRICK_H : 0;
+    s_fb_back_yoff = (s_fb_yoffset == 0) ? g_panel_h : 0;
 
     /* If fb0 still doesn't have room for two pages, disable double-buffering. */
     {
@@ -476,11 +493,40 @@ int brick_screen_init(void) {
     return 0;
 }
 
+static Uint32 *back_buffer(void) {
+    if (s_use_drm) return s_drm_buf[s_drm_back];
+    int yoff = s_fb_pan_disabled ? s_fb_yoffset : s_fb_back_yoff;
+    return s_fb_mem + (size_t)yoff * (size_t)s_fb_stride;
+}
+
+/* Where the blit paths draw, and that buffer's row stride in pixels. */
+static Uint32 *compose_target(void) { return s_rotated ? s_land : back_buffer(); }
+static int     compose_stride(void) { return s_rotated ? BRICK_W : s_fb_stride; }
+
+/* Transpose the landscape canvas into the portrait back buffer.
+ *   270: dst(r,c) = src(c, W-1-r)      90: dst(r,c) = src(H-1-c, r)
+ * Outer loop over destination rows keeps the writes sequential. */
+static void rotate_out(void) {
+    Uint32 *dst = back_buffer();
+    const int W = BRICK_W, H = BRICK_H;
+    for (int r = 0; r < g_panel_h; r++) {
+        Uint32 *out = dst + (size_t)r * (size_t)s_fb_stride;
+        if (g_display_rotation == 270) {
+            const Uint32 *col = s_land + (W - 1 - r);
+            for (int c = 0; c < g_panel_w; c++)
+                out[c] = col[(size_t)c * (size_t)W];
+        } else {
+            for (int c = 0; c < g_panel_w; c++)
+                out[c] = s_land[(size_t)(H - 1 - c) * (size_t)W + r];
+        }
+    }
+}
+
 /* -------------------------------------------------------------------------
- * brick_flip — direct blit SDL surface to fb0 (no rotation)
+ * brick_flip — blit the SDL surface to the back buffer
  *
- * The display is already landscape-oriented and matches the GVU canvas,
- * so this is a straightforward row-by-row copy with NEON alpha OR.
+ * A row-by-row copy with NEON alpha OR. On a portrait panel the target is
+ * the landscape canvas and brick_pageflip transposes it.
  * ---------------------------------------------------------------------- */
 
 void brick_flip(SDL_Surface *surface) {
@@ -488,22 +534,16 @@ void brick_flip(SDL_Surface *surface) {
 
     SDL_LockSurface(surface);
 
-    const Uint32 *src   = (const Uint32 *)surface->pixels;
-    const int     pitch = surface->pitch / 4;
-    /* Write to DRM back buffer, fb0 back page, or fb0 direct (single-page) */
-    Uint32 *dst;
-    if (s_use_drm) {
-        dst = s_drm_buf[s_drm_back];
-    } else {
-        int dst_yoff = s_fb_pan_disabled ? s_fb_yoffset : s_fb_back_yoff;
-        dst = s_fb_mem + (size_t)dst_yoff * (size_t)s_fb_stride;
-    }
+    const Uint32 *src    = (const Uint32 *)surface->pixels;
+    const int     pitch  = surface->pitch / 4;
+    Uint32       *dst    = compose_target();
+    const int     stride = compose_stride();
 
 #ifdef __aarch64__
     const uint32x4_t alpha_v = vdupq_n_u32(0xFF000000u);
     for (int r = 0; r < BRICK_H; r++) {
         const Uint32 *in  = src + (size_t)r * (size_t)pitch;
-        Uint32       *out = dst + (size_t)r * (size_t)s_fb_stride;
+        Uint32       *out = dst + (size_t)r * (size_t)stride;
         /* BRICK_W=1024 is divisible by 8 — no tail loop needed. */
         for (int c = 0; c < BRICK_W; c += 8) {
             vst1q_u32(out + c,     vorrq_u32(vld1q_u32(in + c),     alpha_v));
@@ -513,7 +553,7 @@ void brick_flip(SDL_Surface *surface) {
 #else
     for (int r = 0; r < BRICK_H; r++) {
         const Uint32 *in  = src + (size_t)r * (size_t)pitch;
-        Uint32       *out = dst + (size_t)r * (size_t)s_fb_stride;
+        Uint32       *out = dst + (size_t)r * (size_t)stride;
         for (int c = 0; c < BRICK_W; c++)
             out[c] = in[c] | 0xFF000000u;
     }
@@ -570,6 +610,7 @@ void brick_surface_to_bgra(SDL_Surface *surf, Uint32 *out) {
  * ---------------------------------------------------------------------- */
 
 static void brick_pageflip(void) {
+    if (s_rotated) rotate_out();
     if (s_use_drm) { flip_drm_pageflip(); return; }
     if (s_fb_pan_disabled) return;  /* direct write — no flip needed */
     if (s_fb_wake_frames > 0) { s_fb_wake_frames--; return; }
@@ -579,7 +620,7 @@ static void brick_pageflip(void) {
         vinfo.activate = 0;  /* FB_ACTIVATE_NOW */
         if (ioctl(s_fb_fd, FBIOPAN_DISPLAY, &vinfo) == 0) {
             s_fb_yoffset   = s_fb_back_yoff;
-            s_fb_back_yoff = (s_fb_yoffset == 0) ? BRICK_H : 0;
+            s_fb_back_yoff = (s_fb_yoffset == 0) ? g_panel_h : 0;
         }
     }
 }
@@ -662,13 +703,8 @@ void brick_flip_video(const Uint32 *osd_bgra,
     if (src_cols > BRICK_W) src_cols = BRICK_W;
     int col_off  = (BRICK_W - src_cols) / 2;
 
-    Uint32 *fb;
-    if (s_use_drm) {
-        fb = s_drm_buf[s_drm_back];
-    } else {
-        int fv_dst_yoff = s_fb_pan_disabled ? s_fb_yoffset : s_fb_back_yoff;
-        fb = s_fb_mem + (size_t)fv_dst_yoff * (size_t)s_fb_stride;
-    }
+    Uint32   *fb     = compose_target();
+    const int stride = compose_stride();
 
     /* ------------------------------------------------------------------ */
     /* FIT fast path (zoom_t ≈ 0)                                          */
@@ -677,7 +713,7 @@ void brick_flip_video(const Uint32 *osd_bgra,
         if (!osd_bgra) {
             /* Pure video blit with black letterboxes */
             for (int r = 0; r < BRICK_H; r++) {
-                Uint32 *out = fb + (size_t)r * (size_t)s_fb_stride;
+                Uint32 *out = fb + (size_t)r * (size_t)stride;
                 if (r < row_off || r >= row_off + land_h) {
 #ifdef __aarch64__
                     const uint32x4_t alpha_v = vdupq_n_u32(0xFF000000u);
@@ -710,7 +746,7 @@ void brick_flip_video(const Uint32 *osd_bgra,
             const uint32x4_t alpha_mask = vdupq_n_u32(0xFF000000u);
             const uint32x4_t black_v    = vdupq_n_u32(0xFF000000u);
             for (int r = 0; r < BRICK_H; r++) {
-                Uint32       *out     = fb + (size_t)r * (size_t)s_fb_stride;
+                Uint32       *out     = fb + (size_t)r * (size_t)stride;
                 const Uint32 *osd_row = osd_bgra + (size_t)r * (size_t)BRICK_W;
                 int in_video = (r >= row_off && r < row_off + land_h);
                 const Uint32 *vid_row = in_video
@@ -733,7 +769,7 @@ void brick_flip_video(const Uint32 *osd_bgra,
 #endif
         /* FIT + OSD + brightness — scalar with correct partial-alpha blending */
         for (int r = 0; r < BRICK_H; r++) {
-            Uint32       *out     = fb + (size_t)r * (size_t)s_fb_stride;
+            Uint32       *out     = fb + (size_t)r * (size_t)stride;
             const Uint32 *osd_row = osd_bgra + (size_t)r * (size_t)BRICK_W;
             int in_video = (r >= row_off && r < row_off + land_h);
             const Uint32 *vid_row = in_video
@@ -755,7 +791,7 @@ void brick_flip_video(const Uint32 *osd_bgra,
     int col_start_fp = col_off << 8;
 
     for (int r = 0; r < BRICK_H; r++) {
-        Uint32       *out     = fb + (size_t)r * (size_t)s_fb_stride;
+        Uint32       *out     = fb + (size_t)r * (size_t)stride;
         const Uint32 *osd_row = osd_bgra ? osd_bgra + (size_t)r * (size_t)BRICK_W : NULL;
 
         /* Row bilinear: fractional source row in 8.8 fixed-point */
@@ -963,6 +999,7 @@ void brick_poll_events(void) {
  * ---------------------------------------------------------------------- */
 
 void brick_screen_close(void) {
+    free(s_land); s_land = NULL;
     if (s_input_fd >= 0) { close(s_input_fd); s_input_fd = -1; }
     if (s_use_drm) {
         /* Clear both DRM buffers to black before teardown */

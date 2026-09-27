@@ -18,7 +18,7 @@
 int  brick_screen_init(void);
 void brick_screen_close(void);
 
-/* UI flip: blit 1024×768 SDL surface directly to fb0 */
+/* UI flip: blit the SDL surface to the back buffer (transposed on portrait panels) */
 void brick_flip(SDL_Surface *surface);
 
 /* Copy SDL surface pixels into a flat BGRA buffer (no rotation — display is landscape).
