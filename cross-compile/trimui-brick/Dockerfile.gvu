@@ -1,9 +1,6 @@
 FROM debian:bullseye
-# bullseye left the main mirrors in 2026; the archive still serves it
-RUN sed -i -e 's|deb.debian.org/debian-security|archive.debian.org/debian-security|' \
-           -e 's|deb.debian.org/debian |archive.debian.org/debian |' \
-           -e '/bullseye-updates/d' /etc/apt/sources.list \
- && echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
+# bullseye-security's pool is gone from the mirrors; main still has everything we need
+RUN sed -i '/debian-security/d' /etc/apt/sources.list
 # -------------------------------------------------------------------------
 # GVU Trimui Brick cross-compile image
 # Target: aarch64-linux-gnu, glibc 2.33 (device ships 2.33)
