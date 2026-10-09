@@ -26,30 +26,15 @@ python3 /gvu/cross-compile/miyoo-a30/patch_verneed.py "$BUILD/gvu32"
 python3 /gvu/cross-compile/miyoo-a30/patch_verneed.py "$BUILD/fetch_subs32"
 
 echo "=== Copying SDL2 shared library ==="
-# lib32/libSDL2-2.0.so.0   — unpatched, with OSS, for MiyooMini (V2/V3/V4, glibc 2.28+)
+# lib32/libSDL2-2.0.so.0   — unpatched, for MiyooMini (V2/V3/V4, glibc 2.28+)
 # lib32_a30/libSDL2-2.0.so.0 — patched GLIBC_2.27/2.28/2.29→2.4, for A30 (glibc 2.23)
 # launch.sh prepends lib32_a30 to LD_LIBRARY_PATH only when PLATFORM=A30.
 SDL2_SRC="$(readlink -f /opt/a30/lib/libSDL2-2.0.so.0)"
 mkdir -p "$BUILD/libs32" "$BUILD/libs32_a30"
+cp "$SDL2_SRC" "$BUILD/libs32/libSDL2-2.0.so.0"
 cp "$SDL2_SRC" "$BUILD/libs32_a30/libSDL2-2.0.so.0"
 python3 /gvu/cross-compile/miyoo-a30/patch_verneed.py "$BUILD/libs32_a30/libSDL2-2.0.so.0"
-
-# The Mini has no ALSA: its copy also gets the OSS driver, which libpadsp
-# hands to audioserver. SDL2 leaves OSS out on Linux unless asked.
-cd /tmp
-wget -q https://libsdl.org/release/SDL2-2.26.5.tar.gz
-tar xf SDL2-2.26.5.tar.gz
-mkdir SDL2-2.26.5/bld && cd SDL2-2.26.5/bld
-../configure --host=$CROSS --prefix=/tmp/sdl2-oss --disable-static --enable-shared \
-    --disable-video-opengl --disable-video-opengles --disable-video-x11 \
-    --disable-video-wayland --disable-video-kmsdrm --disable-video-directfb \
-    --disable-pulseaudio --disable-nas --disable-esd --disable-jack \
-    --disable-pipewire --disable-dbus --enable-alsa --enable-oss \
-    --disable-hidapi --disable-ime CC=$CROSS-gcc CFLAGS="$CFLAGS_ARCH" > /dev/null
-make -j$(nproc) install > /dev/null
-cp "$(readlink -f /tmp/sdl2-oss/lib/libSDL2-2.0.so.0)" "$BUILD/libs32/libSDL2-2.0.so.0"
-cd /
-echo "Built: lib32/libSDL2-2.0.so.0 (with OSS)"
+echo "Copied: lib32/libSDL2-2.0.so.0 (unpatched)"
 echo "Copied: lib32_a30/libSDL2-2.0.so.0 (patched for glibc 2.23)"
 
 echo "=== Collecting shared library dependencies ==="
