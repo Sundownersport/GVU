@@ -400,11 +400,14 @@ fail:
  * ---------------------------------------------------------------------- */
 
 /* Transpose only when asked to AND the buffer really is the canvas turned
- * on its side. A device whose display stack already presents landscape keeps
- * the straight copy whatever the platform says. */
+ * on its side; turn 180 only when it is the canvas's shape. A device whose
+ * display stack already presents landscape keeps the straight copy whatever
+ * the platform says. */
 static int setup_rotation(void) {
-    int asked = (g_display_rotation == 90 || g_display_rotation == 270);
-    s_rotated = asked && s_buf_w == BRICK_H && s_buf_h == BRICK_W;
+    int sideways = (g_display_rotation == 90 || g_display_rotation == 270);
+    int asked    = sideways || g_display_rotation == 180;
+    s_rotated = sideways ? s_buf_w == BRICK_H && s_buf_h == BRICK_W
+                         : asked && s_buf_w == BRICK_W && s_buf_h == BRICK_H;
     if (asked && !s_rotated)
         fprintf(stderr, "brick_screen: rotation %d requested but the buffer is %dx%d, copying straight\n",
                 g_display_rotation, s_buf_w, s_buf_h);
@@ -524,8 +527,9 @@ static Uint32 *back_buffer(void) {
 static Uint32 *compose_target(void) { return s_rotated ? s_land : back_buffer(); }
 static int     compose_stride(void) { return s_rotated ? BRICK_W : s_fb_stride; }
 
-/* Transpose the landscape canvas into the portrait back buffer.
+/* Transpose the landscape canvas into the portrait back buffer, or turn it.
  *   270: dst(r,c) = src(c, W-1-r)      90: dst(r,c) = src(H-1-c, r)
+ *   180: dst(r,c) = src(H-1-r, W-1-c)
  * Outer loop over destination rows keeps the writes sequential. */
 static void rotate_out(void) {
     Uint32 *dst = back_buffer();
@@ -536,6 +540,10 @@ static void rotate_out(void) {
             const Uint32 *col = s_land + (W - 1 - r);
             for (int c = 0; c < s_buf_w; c++)
                 out[c] = col[(size_t)c * (size_t)W];
+        } else if (g_display_rotation == 180) {
+            const Uint32 *in = s_land + (size_t)(H - 1 - r) * (size_t)W + (W - 1);
+            for (int c = 0; c < s_buf_w; c++)
+                out[c] = in[-c];
         } else {
             for (int c = 0; c < s_buf_w; c++)
                 out[c] = s_land[(size_t)(H - 1 - c) * (size_t)W + r];
