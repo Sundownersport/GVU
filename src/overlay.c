@@ -200,20 +200,21 @@ void help_draw(SDL_Renderer *r, TTF_Font *font, TTF_Font *font_small,
         { "\xe2\x86\x91\xe2\x86\x93",            "Brightness"       },
         { "START",                               "Subtitles"        },
         { "START+X",                             "Reload subs"      },
+        { "START+L1/R1",                         "Sub track"        },
         /* ←→ = U+2190 U+2192 */
         { "START+\xe2\x86\x90\xe2\x86\x92",     "Sub sync \xc2\xb1""0.5 s" },
         /* ↑↓ = U+2191 U+2193 */
         { "START+\xe2\x86\x91\xe2\x86\x93",     "Sub speed / reset" },
         { "B",                                   "Stop"             },
     };
-    enum { N_BR = 7, N_PB = 13 };
+    enum { N_BR = 7, N_PB = 14 };
 
     draw_dim(r, win_w, win_h);
 
-    /* Panel — tall enough for 13 playback rows */
+    /* Panel — tall enough for 14 playback rows */
     int px = sc(20, win_w);
     int pw = win_w - px * 2;
-    int ph = sc_h(390, win_h);
+    int ph = sc_h(410, win_h);
     int py = (win_h - ph) / 2;
     panel_bg(r, px, py, pw, ph, theme);
 
@@ -339,7 +340,7 @@ static const Slide SLIDES[TUTORIAL_SLIDE_COUNT] = {
         "Subtitles",
         {
             { "START",                           "Toggle subtitles on / off"  },
-            { NULL,                              "Auto-loads a matching .srt file." },
+            { NULL,                              "Auto-loads a .srt or embedded track." },
             /* ←→ = U+2190 U+2192 */
             { "START+\xe2\x86\x90\xe2\x86\x92", "Sub sync \xc2\xb1""0.5 s"  },
             /* ↑↓ = U+2191 U+2193 */

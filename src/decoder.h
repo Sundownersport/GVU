@@ -81,6 +81,13 @@ typedef struct {
     /* All audio stream indices found in the file */
     int              audio_stream_indices[8];
     int              audio_stream_count;
+
+    /* Text subtitle tracks. sub_cb gets the packets of sub_stream_idx (-1 = none). */
+    int              sub_stream_indices[16];
+    int              sub_stream_count;
+    volatile int     sub_stream_idx;
+    void           (*sub_cb)(void *ud, const AVPacket *pkt);
+    void            *sub_ud;
 } DemuxCtx;
 
 int  demux_open        (DemuxCtx *d, const char *path, char *errbuf, int sz);

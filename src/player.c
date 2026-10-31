@@ -4,6 +4,7 @@
 #include "platform.h"
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdatomic.h>
 #include <math.h>
 #ifdef GVU_A30
@@ -15,6 +16,67 @@
 
 #define AV_SYNC_THRESHOLD_SEC  0.040   /* 40ms — within one frame at 25fps */
 #define AV_NOSYNC_THRESHOLD_SEC 0.15   /* drop frames further than 150ms behind */
+#define SUB_DEFAULT_DURATION_SEC 4.0   /* for embedded lines with no duration */
+
+/* -------------------------------------------------------------------------
+ * Embedded subtitles
+ * ---------------------------------------------------------------------- */
+
+static int lang_matches(const char *want, const char *tag) {
+    static const char * const alias[][3] = {
+        { "en", "eng", NULL }, { "es", "spa", NULL }, { "fr", "fre", "fra" },
+        { "de", "ger", "deu" }, { "pt", "por", NULL }, { "it", "ita", NULL },
+        { "nl", "dut", "nld" }, { "ja", "jpn", NULL }, { "ko", "kor", NULL },
+        { "zh", "chi", "zho" },
+    };
+    if (strcasecmp(want, tag) == 0) return 1;
+    for (size_t i = 0; i < sizeof(alias) / sizeof(alias[0]); i++) {
+        if (strcasecmp(want, alias[i][0]) != 0) continue;
+        return strcasecmp(tag, alias[i][1]) == 0 ||
+               (alias[i][2] && strcasecmp(tag, alias[i][2]) == 0);
+    }
+    return 0;
+}
+
+static void select_embedded_subs(Player *p) {
+    DemuxCtx *d = &p->demux;
+    d->sub_stream_idx = -1;
+    if (p->subtitle.count > 0 || d->sub_stream_count == 0) return;
+
+    const char *want = config_sub_lang();
+    int first_full = -1;
+    for (int i = 0; i < d->sub_stream_count; i++) {
+        AVStream *st = d->fmt_ctx->streams[d->sub_stream_indices[i]];
+        if (st->disposition & AV_DISPOSITION_FORCED) continue;
+        if (first_full < 0) first_full = d->sub_stream_indices[i];
+        AVDictionaryEntry *lang = av_dict_get(st->metadata, "language", NULL, 0);
+        if (want[0] && lang && lang_matches(want, lang->value)) {
+            first_full = d->sub_stream_indices[i];
+            break;
+        }
+    }
+    d->sub_stream_idx = first_full >= 0 ? first_full : d->sub_stream_indices[0];
+    p->subtitle.enabled = 1;
+}
+
+static void on_sub_packet(void *ud, const AVPacket *pkt) {
+    Player *p = (Player *)ud;
+    AVStream *st = p->demux.fmt_ctx->streams[pkt->stream_index];
+    int64_t pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+    if (pts == AV_NOPTS_VALUE) return;
+
+    double tb    = av_q2d(st->time_base);
+    double start = (double)pts * tb;
+    double end   = pkt->duration > 0 ? start + (double)pkt->duration * tb
+                                     : start + SUB_DEFAULT_DURATION_SEC;
+    int is_ass = st->codecpar->codec_id == AV_CODEC_ID_ASS ||
+                 st->codecpar->codec_id == AV_CODEC_ID_SSA;
+
+    SDL_LockMutex(p->sub_mutex);
+    if (pkt->stream_index == p->demux.sub_stream_idx)
+        sub_add(&p->subtitle, start, end, (const char *)pkt->data, pkt->size, is_ass);
+    SDL_UnlockMutex(p->sub_mutex);
+}
 
 
 /* -------------------------------------------------------------------------
@@ -110,7 +172,11 @@ int player_open(Player *p, const char *path, SDL_Renderer *renderer,
 #endif
     p->brightness = 1.0f;
 
+    p->sub_mutex = SDL_CreateMutex();
+    p->demux.sub_cb = on_sub_packet;
+    p->demux.sub_ud = p;
     sub_load(&p->subtitle, path);
+    select_embedded_subs(p);
     return 0;
 }
 
@@ -243,8 +309,53 @@ void player_zoom_cycle(Player *p) {
     p->zoom_osd_hide_at = SDL_GetTicks() + 1500;
 }
 
+int player_has_subs(const Player *p) {
+    return p->subtitle.count > 0 || p->demux.sub_stream_idx >= 0;
+}
+
+void player_cycle_subs(Player *p, int dir) {
+    DemuxCtx *d = &p->demux;
+    if (d->sub_stream_idx < 0) {
+        snprintf(p->sub_osd_label, sizeof(p->sub_osd_label), "%s",
+                 p->subtitle.count > 0 ? "Using .srt file" : "No subtitle tracks");
+    } else {
+        int pos = 0;
+        for (int i = 0; i < d->sub_stream_count; i++)
+            if (d->sub_stream_indices[i] == d->sub_stream_idx) pos = i;
+        if (d->sub_stream_count > 1) {
+            pos = (pos + dir + d->sub_stream_count) % d->sub_stream_count;
+            SDL_LockMutex(p->sub_mutex);
+            d->sub_stream_idx = d->sub_stream_indices[pos];
+            sub_clear(&p->subtitle);
+            p->subtitle.enabled = 1;
+            SDL_UnlockMutex(p->sub_mutex);
+            /* The demux has read ahead of the picture; go back for the lines
+               it already passed. */
+            player_seek_to(p, audio_get_clock(&p->audio));
+        }
+        AVDictionaryEntry *lang = av_dict_get(
+            d->fmt_ctx->streams[d->sub_stream_idx]->metadata, "language", NULL, 0);
+        if (lang)
+            snprintf(p->sub_osd_label, sizeof(p->sub_osd_label),
+                     "Subtitles %d/%d: %.8s", pos + 1, d->sub_stream_count, lang->value);
+        else
+            snprintf(p->sub_osd_label, sizeof(p->sub_osd_label),
+                     "Subtitles %d/%d", pos + 1, d->sub_stream_count);
+    }
+    p->sub_osd_visible = 1;
+    p->sub_osd_hide_at = SDL_GetTicks() + 1500;
+}
+
+void player_reload_subs(Player *p) {
+    SDL_LockMutex(p->sub_mutex);
+    sub_free(&p->subtitle);
+    sub_load(&p->subtitle, p->path);
+    select_embedded_subs(p);
+    SDL_UnlockMutex(p->sub_mutex);
+}
+
 void player_toggle_subs(Player *p) {
-    if (p->subtitle.count == 0) {
+    if (!player_has_subs(p)) {
         snprintf(p->sub_osd_label, sizeof(p->sub_osd_label), "No subtitles");
     } else {
         sub_toggle(&p->subtitle);
@@ -344,6 +455,7 @@ void player_close(Player *p) {
     if (p->brick_landscape_frame) { av_frame_free(&p->brick_landscape_frame); p->brick_landscape_frame = NULL; }
 #endif
     sub_free(&p->subtitle);
+    if (p->sub_mutex) { SDL_DestroyMutex(p->sub_mutex); p->sub_mutex = NULL; }
     p->state = PLAYER_STOPPED;
 #ifdef GVU_A30
     /* After freeing the H.264 DPB and all FFmpeg buffers, glibc often keeps
@@ -690,12 +802,50 @@ static void draw_indicator_bar(SDL_Renderer *r, TTF_Font *font,
               0xff, 0xff, 0xff);
 }
 
+/* Turn spaces into newlines where a line is wider than max_w. */
+static void wrap_subtitle(TTF_Font *font, const char *text, char *out, int out_sz,
+                          int max_w) {
+    snprintf(out, (size_t)out_sz, "%s", text);
+    char *line = out;
+    while (line) {
+        char *nl  = strchr(line, '\n');
+        char *end = nl ? nl : line + strlen(line);
+        char saved = *end;
+        int w = 0, h = 0;
+        *end = '\0';
+        TTF_SizeUTF8(font, line, &w, &h);
+        *end = saved;
+
+        char *brk = NULL;
+        if (w > max_w) {
+            for (char *c = line; c < end; c++) {
+                if (*c != ' ') continue;
+                *c = '\0';
+                TTF_SizeUTF8(font, line, &w, &h);
+                *c = ' ';
+                if (w > max_w) break;
+                brk = c;
+            }
+        }
+        if (brk) {
+            *brk = '\n';
+            line = brk + 1;
+        } else {
+            line = nl ? nl + 1 : NULL;
+        }
+    }
+}
+
 /* Draw subtitle text centred near the bottom.
    bottom_y is the y coordinate of the bottom boundary (OSD top, or win_h). */
 static void draw_subtitle_text(SDL_Renderer *r, TTF_Font *font,
                                const char *text, int win_w, int bottom_y) {
     int pad = sc(8, win_w);
     int lh  = TTF_FontHeight(font);
+
+    char wrapped[SUB_TEXT_MAX];
+    wrap_subtitle(font, text, wrapped, sizeof(wrapped), win_w - pad * 4);
+    text = wrapped;
 
     /* Count lines and find max width */
     char buf[SUB_TEXT_MAX];
@@ -808,12 +958,14 @@ void player_draw(SDL_Renderer *r, TTF_Font *font, TTF_Font *font_small,
         /* Subtitles — drawn above video, below OSD */
         {
             double pos = audio_get_clock(&p->audio);
+            SDL_LockMutex(p->sub_mutex);
             const SubEntry *sub = sub_get(&p->subtitle, pos);
             if (sub) {
                 int osd_h  = show_osd ? sc(80, win_w) : 0;
                 int bottom = win_h - osd_h - sc(4, win_w);
                 draw_subtitle_text(r, font, sub->text, win_w, bottom);
             }
+            SDL_UnlockMutex(p->sub_mutex);
         }
 
         if (show_osd)

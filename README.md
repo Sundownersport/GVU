@@ -80,6 +80,7 @@ On first launch, GVU scans your media folders and builds its library. Make sure 
 | START + D-pad left/right | Subtitle sync ±0.5s |
 | START + D-pad up | Change subtitle speed to match with NTSC/PAL, etc.|
 | START + D-pad down | Reset subtitle speed/sync |
+| START + L1/R1 | Previous/next embedded subtitle track |
 | Volume up/down | Adjust volume |
 
 ### Browser controls
@@ -102,7 +103,7 @@ You can also add covers manually by placing a `cover.jpg` or `cover.png` in the 
 
 ### Subtitles
 
-Local .srt files are loaded automatically if they share a filename with the video. To download subtitles during playback, press **START** — if no subtitle is loaded it opens the downloader. Use **START + D-pad left/right** to adjust subtitle timing.
+Local .srt files are loaded automatically if they share a filename with the video. Otherwise GVU shows the text subtitle track embedded in the video (SRT, ASS/SSA or WebVTT, such as in an .mkv), preferring your saved subtitle language. Image-based tracks (PGS, VobSub) aren't supported. To download subtitles during playback, press **START** — if no subtitle is loaded it opens the downloader. Use **START + D-pad left/right** to adjust subtitle timing.
 
 You can add subtitles manually with a computer, just make sure the .srt file matches the video file name in the same folder.
 > EXAMPLE: S01E01.mp4, S01E01.srt

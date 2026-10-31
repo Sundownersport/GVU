@@ -248,6 +248,8 @@ static int demux_thread(void *userdata) {
             packet_queue_put(&d->audio_queue, pkt);
         else if (pkt->stream_index == d->video_stream_idx)
             packet_queue_put(&d->video_queue, pkt);
+        else if (pkt->stream_index == d->sub_stream_idx && d->sub_cb)
+            d->sub_cb(d->sub_ud, pkt);
 
         av_packet_unref(pkt);
     }
@@ -264,6 +266,7 @@ int demux_open(DemuxCtx *d, const char *path, char *errbuf, int errbuf_sz) {
     memset(d, 0, sizeof(*d));
     d->audio_stream_idx = -1;
     d->video_stream_idx = -1;
+    d->sub_stream_idx   = -1;
 
     int ret = avformat_open_input(&d->fmt_ctx, path, NULL, NULL);
     if (ret < 0) { if (errbuf) av_strerror(ret, errbuf, (size_t)errbuf_sz); return -1; }
@@ -285,6 +288,19 @@ int demux_open(DemuxCtx *d, const char *path, char *errbuf, int errbuf_sz) {
         if (d->fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
             d->audio_stream_count < 8)
             d->audio_stream_indices[d->audio_stream_count++] = (int)i;
+
+        switch (d->fmt_ctx->streams[i]->codecpar->codec_id) {
+            case AV_CODEC_ID_SUBRIP:
+            case AV_CODEC_ID_TEXT:
+            case AV_CODEC_ID_WEBVTT:
+            case AV_CODEC_ID_ASS:
+            case AV_CODEC_ID_SSA:
+                if (d->sub_stream_count < 16)
+                    d->sub_stream_indices[d->sub_stream_count++] = (int)i;
+                break;
+            default:
+                break;
+        }
     }
 
     packet_queue_init(&d->audio_queue);

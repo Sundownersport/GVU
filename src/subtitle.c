@@ -142,6 +142,7 @@ int sub_load(SubCtx *ctx, const char *video_path) {
         return 0;
     }
 
+    ctx->capacity = capacity;
     ctx->enabled = 1;
     fprintf(stderr, "subtitle: loaded %d entries from %s\n",
             ctx->count, srt_path);
@@ -153,9 +154,78 @@ void sub_free(SubCtx *ctx) {
     memset(ctx, 0, sizeof(*ctx));
 }
 
+int sub_add(SubCtx *ctx, double start_sec, double end_sec,
+            const char *data, int len, int is_ass) {
+    char raw[SUB_TEXT_MAX];
+    if (len >= (int)sizeof(raw)) len = (int)sizeof(raw) - 1;
+    memcpy(raw, data, (size_t)len);
+    raw[len] = '\0';
+
+    const char *src = raw;
+    if (is_ass) {
+        /* ReadOrder,Layer,Style,Name,MarginL,MarginR,MarginV,Effect,Text */
+        for (int i = 0; i < 8 && src; i++) {
+            src = strchr(src, ',');
+            if (src) src++;
+        }
+        if (!src) return 0;
+        /* Positioned signs and vector drawings would hide the dialogue */
+        if (strstr(src, "\\pos(") || strstr(src, "\\move(") ||
+            strstr(src, "\\p1"))
+            return 0;
+    }
+
+    char clean[SUB_TEXT_MAX];
+    strip_markup(src, clean, sizeof(clean));
+
+    char text[SUB_TEXT_MAX];
+    int o = 0;
+    for (const char *p = clean; *p; p++) {
+        if (*p == '\r') continue;
+        if (is_ass && p[0] == '\\' && (p[1] == 'N' || p[1] == 'n')) {
+            text[o++] = '\n';
+            p++;
+        } else if (is_ass && p[0] == '\\' && p[1] == 'h') {
+            text[o++] = ' ';
+            p++;
+        } else {
+            text[o++] = *p;
+        }
+    }
+    while (o > 0 && isspace((unsigned char)text[o - 1])) o--;
+    text[o] = '\0';
+    if (o == 0) return 0;
+
+    int pos = ctx->count;
+    while (pos > 0 && ctx->entries[pos - 1].start_sec > start_sec) pos--;
+    for (int i = pos - 1; i >= 0 && ctx->entries[i].start_sec == start_sec; i--)
+        if (strcmp(ctx->entries[i].text, text) == 0) return 0;
+
+    if (ctx->count >= ctx->capacity) {
+        int capacity = ctx->capacity ? ctx->capacity * 2 : 64;
+        SubEntry *tmp = realloc(ctx->entries, (size_t)capacity * sizeof(SubEntry));
+        if (!tmp) return 0;
+        ctx->entries  = tmp;
+        ctx->capacity = capacity;
+    }
+    memmove(&ctx->entries[pos + 1], &ctx->entries[pos],
+            (size_t)(ctx->count - pos) * sizeof(SubEntry));
+    ctx->entries[pos].start_sec = start_sec;
+    ctx->entries[pos].end_sec   = end_sec;
+    memcpy(ctx->entries[pos].text, text, (size_t)o + 1);
+    ctx->count++;
+    return 1;
+}
+
+void sub_clear(SubCtx *ctx) {
+    free(ctx->entries);
+    ctx->entries  = NULL;
+    ctx->count    = 0;
+    ctx->capacity = 0;
+}
+
 void sub_toggle(SubCtx *ctx) {
-    if (ctx->count > 0)
-        ctx->enabled = !ctx->enabled;
+    ctx->enabled = !ctx->enabled;
 }
 
 const SubEntry *sub_get(const SubCtx *ctx, double pos_sec) {

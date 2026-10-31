@@ -13,6 +13,7 @@ typedef struct {
 typedef struct {
     SubEntry *entries;
     int       count;
+    int       capacity;
     int       enabled;      /* 1 = subtitles on, 0 = off */
     double    delay_sec;    /* offset added to pos_sec before lookup; + = later, - = earlier */
     float     speed;        /* multiplier applied to pos_sec before lookup (default 1.0).
@@ -26,7 +27,14 @@ typedef struct {
 int  sub_load  (SubCtx *ctx, const char *video_path);
 void sub_free  (SubCtx *ctx);
 
-/* Toggle subtitle visibility. No-op if no subtitles were loaded. */
+/* Add a line from an embedded track, keeping entries sorted by start time.
+   Lines already held are ignored, so re-reading after a seek is harmless.
+   Returns 1 if the line was added. */
+int  sub_add   (SubCtx *ctx, double start_sec, double end_sec,
+                const char *data, int len, int is_ass);
+/* Drop all lines, keeping delay, speed and enabled. */
+void sub_clear (SubCtx *ctx);
+
 void sub_toggle(SubCtx *ctx);
 
 /* Return the active entry for pos_sec, or NULL if none / disabled. */

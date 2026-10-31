@@ -62,6 +62,7 @@ typedef struct {
 
     /* Subtitles */
     SubCtx       subtitle;
+    SDL_mutex   *sub_mutex;  /* entries are added from the demux thread */
     int          sub_osd_visible;
     Uint32       sub_osd_hide_at;
     char         sub_osd_label[32];   /* "Subtitles ON" / "OFF" / "No subtitles" */
@@ -129,6 +130,15 @@ void player_show_wake_toast(Player *p);
 
 /* Toggle subtitle display on/off. Shows a toast with the new state. */
 void player_toggle_subs(Player *p);
+
+/* 1 if a .srt is loaded or an embedded text track is selected. */
+int  player_has_subs(const Player *p);
+
+/* Step through the embedded text tracks. Shows a toast. */
+void player_cycle_subs(Player *p, int dir);
+
+/* Reload after a .srt download. A .srt replaces any embedded track. */
+void player_reload_subs(Player *p);
 
 /* Shift subtitle timing by delta_sec (+ = subtitles appear later). Shows toast. */
 void player_sub_adjust(Player *p, double delta_sec);

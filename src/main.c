@@ -1178,7 +1178,7 @@ int main(int argc, char *argv[]) {
                            If no subtitle is loaded, trigger the downloader instead. */
                         if (!start_used_as_modifier) {
 #ifdef GVU_HW
-                            if (player.subtitle.count > 0)
+                            if (player_has_subs(&player))
                                 player_toggle_subs(&player);
                             else
                                 sub_workflow_trigger(&sub_wf, player.path, 0, 1);
@@ -1205,6 +1205,8 @@ int main(int argc, char *argv[]) {
                             case SDLK_LEFT:  player_sub_adjust(&player, -0.5); break;
                             case SDLK_RIGHT: player_sub_adjust(&player, +0.5); break;
                             case SDLK_UP:    player_sub_cycle_speed(&player); break;
+                            case SDLK_PAGEUP:   player_cycle_subs(&player, -1); break;
+                            case SDLK_PAGEDOWN: player_cycle_subs(&player, +1); break;
                             case SDLK_DOWN:
                                 /* reset both speed and delay */
                                 player.subtitle.speed     = 1.0f;
@@ -1556,8 +1558,7 @@ int main(int argc, char *argv[]) {
                 sub_wf.state = SUB_NONE;
                 if (is_ok) {
                     if (sub_wf.from_playback) {
-                        sub_free(&player.subtitle);
-                        sub_load(&player.subtitle, player.path);
+                        player_reload_subs(&player);
                     }
                     snprintf(sub_toast_msg, sizeof(sub_toast_msg),
                              "Subtitle downloaded");
